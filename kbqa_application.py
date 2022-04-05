@@ -4,10 +4,11 @@ from collections import Counter
 import numpy as np
 import torch
 from text2vec import Word2Vec, SentenceModel, semantic_search
-from transformers import BertTokenizer, BertForSequenceClassification, Trainer
+from transformers import BertTokenizer, BertForSequenceClassification, Trainer, BertForTokenClassification, TrainingArguments
 
-from bert_for_ner_predict import predict_entity
+from KBQA_NLPCC_2016.bert_for_ner_predict import predict_entity
 from test_datasets import Dataset
+# from common.model import NER_TOKENIZER, NER_MODEL, QA_TOKENIZER, QA_MODEL, SENTENCEMODEL
 
 device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
 
@@ -35,7 +36,8 @@ def get_kb_data(kb_path: str):
     return triples
 
 
-def get_candidate_attr_answer(input_question, ner_model, kb_path):
+def get_candidate_attr_answer(input_question: str, ner_tokenizer: BertTokenizer, ner_model: BertForTokenClassification,
+                              embedder: SentenceModel, kb_path: str):
     # Load the data
     triples = get_kb_data(kb_path)
 
@@ -43,7 +45,7 @@ def get_candidate_attr_answer(input_question, ner_model, kb_path):
     kb_entities = list(set([item[0] for item in triples]))
 
     # Get the Entity
-    entity = predict_entity(input_question, ner_model)
+    entity = predict_entity(input_question, ner_tokenizer, ner_model)
     print(entity)
     # Figure out: Is the NER result in the kb_entities?
     if entity in kb_entities:
@@ -64,9 +66,7 @@ def get_candidate_attr_answer(input_question, ner_model, kb_path):
         return candidate_attribute, candidate_answer, entity
 
     else:
-        embedder = SentenceModel()
         entity_encoded = embedder.encode(entity)
-
         kb_entities_encoded = embedder.encode(kb_entities)
         hits = semantic_search(entity_encoded, kb_entities_encoded, top_k=1)[0]
         most_similar_entity_index = hits[0]['corpus_id']
@@ -77,7 +77,8 @@ def get_candidate_attr_answer(input_question, ner_model, kb_path):
         return [], [], feedback
 
 
-def predict_candidate_answer(input_question, candidate_answers, qa_model_path):
+def predict_candidate_answer(input_question: str, candidate_answers: list, qa_tokenizer: BertTokenizer,
+                             qa_model: BertForSequenceClassification):
     # Tokenizer only accept the list
     question_answer_list = []
     for item in candidate_answers:
@@ -85,15 +86,15 @@ def predict_candidate_answer(input_question, candidate_answers, qa_model_path):
         question_answer_list.append(temp)
 
     # Load the tokenizer
-    tokenizer = BertTokenizer.from_pretrained(qa_model_path)
-    input_encode = tokenizer(question_answer_list, padding=True, truncation=True, max_length=512)
+    input_encode = qa_tokenizer(question_answer_list, padding=True, truncation=True, max_length=512)
 
     # Build the dataset and model
     input_dataset = Dataset(input_encode, [0 for i in range(len(question_answer_list))])
-    model = BertForSequenceClassification.from_pretrained(qa_model_path).to(device)
+    model = qa_model.to("cpu")
 
     # Predict
-    trainer = Trainer(model=model)
+    trainer = Trainer(model=model, args=TrainingArguments(per_device_train_batch_size=2, per_device_eval_batch_size=2,
+                                                          no_cuda=True, output_dir="tmp_trainer"))
     result = trainer.predict(input_dataset)
     prediction_labels = np.argmax(result.predictions, axis=1).tolist()
     y_pred = list(prediction_labels)
@@ -101,15 +102,16 @@ def predict_candidate_answer(input_question, candidate_answers, qa_model_path):
     return y_pred
 
 
-def get_final_answer(input_question: str, candidate_answer: list, candidate_answer_status: list, candidate_attribute):
+def get_final_answer(input_question: str, candidate_answer: list, candidate_answer_status: list, candidate_attribute,
+                     embedder: SentenceModel):
     # Get the number of "true" labels (from the model)
     count_true_label = Counter(candidate_answer_status)[1]
 
     # 如果 Bert 给候选答案进行分类后仍然有多个答案，则通过计算这些答案相对应的属性与问句的 similarity 来最终决定 final 答案
     if count_true_label > 1:
 
-        w2vmodel = Word2Vec("w2v-light-tencent-chinese")
-        encoded_question_encoded = w2vmodel.encode(input_question)
+        # w2vmodel = Word2Vec("w2v-light-tencent-chinese")
+        # encoded_question_encoded = w2vmodel.encode(input_question)
 
         true_label_answers_attr = []
         for i in range(len(candidate_answer_status)):
@@ -130,7 +132,6 @@ def get_final_answer(input_question: str, candidate_answer: list, candidate_answ
         # most_similar_index = np.argmax(similarities, axis=0)
         # final_answer = candidate_answer[most_similar_index]
 
-        embedder = SentenceModel()
         encoded_question_encoded = embedder.encode(input_question)
 
         # 获取由模型预测为真的答案所对应的属性值
@@ -199,18 +200,22 @@ def get_final_attr(input_question: str, candidate_answer_status: list, candidate
     return final_attr
 
 
-def automated_qa(question, ner_model, qa_model, kb_path):
+def automated_qa(question: str, ner_tokenizer: BertTokenizer, ner_model: BertForTokenClassification,
+                 qa_tokenizer: BertTokenizer, qa_model: BertForSequenceClassification, embedder: SentenceModel,
+                 kb_path: str):
     # temp: to add the "space" between chars
     temp = ""
     for char in question:
         temp = temp + char + " "
 
     question = temp.strip()
-    candidate_attribute, candidate_answers, entity = get_candidate_attr_answer(question, ner_model, kb_path)
+    candidate_attribute, candidate_answers, entity = get_candidate_attr_answer(question, ner_tokenizer, ner_model,
+                                                                               embedder, kb_path)
 
     if candidate_answers and candidate_attribute:
-        candidate_answer_status = predict_candidate_answer(question, candidate_answers, qa_model)
-        final_answer = get_final_answer(question, candidate_answers, candidate_answer_status, candidate_attribute)
+        candidate_answer_status = predict_candidate_answer(question, candidate_answers, qa_tokenizer, qa_model)
+        final_answer = get_final_answer(question, candidate_answers, candidate_answer_status, candidate_attribute,
+                                        embedder)
 
         return final_answer
 
@@ -218,13 +223,14 @@ def automated_qa(question, ner_model, qa_model, kb_path):
         return entity
 
 
-if __name__ == "__main__":
-    start = time.time()
-    answer = automated_qa("今天的推荐歌曲是什么？", "../model/bert_ner_model", "../model/bert_qa_model", "../data/test.kb")
-    end = time.time()
-    print(answer)
-    interval = end - start
-    print(interval)
+# if __name__ == "__main__":
+    # start = time.time()
+    # answer = automated_qa("今天的推荐歌曲是什么？", NER_TOKENIZER, NER_MODEL, QA_TOKENIZER, QA_MODEL, SENTENCEMODEL,
+    #                       "../data/test.kb")
+    # end = time.time()
+    # print(answer)
+    # interval = end - start
+    # print(interval)
 
     # input_question = input("请输入您的问题：")
     #

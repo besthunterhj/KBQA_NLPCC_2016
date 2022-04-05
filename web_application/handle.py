@@ -1,21 +1,14 @@
+import time
 import hashlib
 import web
 import receive
 import reply
-import application.kbqa_application as kbqa
-from transformers import BertForSequenceClassification, BertForTokenClassification, BertTokenizer
-from text2vec import Word2Vec
+from KBQA_NLPCC_2016.kbqa_application import automated_qa
+from common.model import NER_TOKENIZER, NER_MODEL, QA_TOKENIZER, QA_MODEL, SENTENCEMODEL
+
 
 # judge the data sent to the server
 class Handle(object):
-    def __init__(self):
-        self.ner_tokenizer = BertTokenizer.from_pretrained("../../model/bert_ner_model")
-        self.qa_tokenzier = BertTokenizer.from_pretrained("../../model/bert_qa_model")
-        self.ner_model = BertForTokenClassification.from_pretrained("../../model/bert_ner_model")
-        self.qa_model = BertForSequenceClassification.from_pretrained("../../model/bert_qa_model")
-        self.w2v = Word2Vec("w2v-light-tencent-chinese")
-
-
     def GET(self):
         try:
             # get the data from input
@@ -61,9 +54,9 @@ class Handle(object):
                 toUser = recMsg.FromUserName
                 fromUser = recMsg.ToUserName
                 question = str(recMsg.Content, "utf-8")
-                # content = kbqa.automated_qa(question, , "../../data/test.kb")
-                # replyMsg = reply.TextMsg(toUser, fromUser, content)
-                # return replyMsg.send()
+                content = automated_qa(question, NER_TOKENIZER, NER_MODEL, QA_TOKENIZER, QA_MODEL, SENTENCEMODEL, "../../data/test.kb")
+                replyMsg = reply.TextMsg(toUser, fromUser, content)
+                return replyMsg.send()
 
             else:
                 print("Don't send immediately!")
@@ -73,5 +66,9 @@ class Handle(object):
             return Argument
 
 # if __name__ == "__main__":
-#     test = kbqa.automated_qa("广东外语外贸大学的校庆是什么时候？", "../../model/bert_ner_model", "../../model/bert_qa_model", "../../data/kbqa_data.kb")
+#     start = time.time()
+#     test = automated_qa("何俊毅的风格是什么？", NER_TOKENIZER, NER_MODEL, QA_TOKENIZER, QA_MODEL, SENTENCEMODEL,
+#                         "../../data/test.kb")
+#     end = time.time()
 #     print(test)
+#     print(end - start)

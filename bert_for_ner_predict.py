@@ -1,19 +1,18 @@
 import numpy as np
 import torch
-from transformers import BertTokenizer, BertForTokenClassification, Trainer
+from transformers import BertTokenizer, BertForTokenClassification, Trainer, TrainingArguments
 from test_datasets import Dataset
 
 
-def predict_entity(sentence: str, ner_model_path: str) -> str:
+def predict_entity(sentence: str, ner_tokenizer: BertTokenizer, ner_model: BertForTokenClassification) -> str:
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     # Load the model, tokenizer and trainer.
-    tokenizer = BertTokenizer.from_pretrained(ner_model_path)
-    model = BertForTokenClassification.from_pretrained(ner_model_path).to(device)
-    trainer = Trainer(model)
+    model = ner_model.to(device)
+    trainer = Trainer(model=model, args=TrainingArguments(per_device_eval_batch_size=2, per_device_train_batch_size=2, output_dir="tmp_trainer"))
 
     # Encode the sentence.
-    sentence_encoded = tokenizer([sentence], truncation=True, padding=True, max_length=512)
+    sentence_encoded = ner_tokenizer([sentence], truncation=True, padding=True, max_length=512)
 
     # Init the prediction list of NER index
     prediction_list = [[0 for i in range(len(sentence_encoded["input_ids"][0]))]]
@@ -46,7 +45,7 @@ def predict_entities(sentence_list: list, ner_model_path: str) -> list:
     # Load the model, tokenizer and trainer.
     tokenizer = BertTokenizer.from_pretrained(ner_model_path)
     model = BertForTokenClassification.from_pretrained(ner_model_path).to(device)
-    trainer = Trainer(model)
+    trainer = Trainer(model=model)
 
     # Encode the sentence.
     sentence_encoded = tokenizer(sentence_list, truncation=True, padding=True, max_length=512)
